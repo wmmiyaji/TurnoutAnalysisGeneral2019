@@ -1,0 +1,198 @@
+---
+title: "Morris County Turn Out Analysis November 2019"
+author: "Wendell Miyaji"
+date: "12/10/2019"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+source("./R/read_in_data.R")
+source("./R/kmeans_analysis.R")
+source("./R/map_w_clusters.R")
+source("./R/make_turnout_profile_muni.R")
+```
+
+## Introduction
+
+This note reviews and summarizes Bihourly Turnout Data for Morris County for the November 2019 General Election as collected by Morris County Democratic Committee (MCDC) Poll Challengers. This data has value in being able to estimate total turnout by election district, to direct and focus GOTV canvass, phone bank and text message resources. The reader might also see other values in the process and comments and suggestions are welcome. Also by sharing these results and the value of the data, greater participation will be encouraged in future election cycles. 
+
+The analysis herein presents these bihourly profiles for those Morris County districts where turnout data was reported and recorded. 
+
+Morris County Election Board poll workers post every two hours totals for each district at the polling location. Nominally this data is reported at 8AM, 10AM, Noon, 2PM, 4PM, 6PM and 8PM. The individual voting machines have an small screen which presents the total number of ballots recorded for the day. The poll worker adds the numbers from the machines for each district, typically two machines, then records and posts this data on a small form provided by Morris County. The data is viewable by the public. 
+
+MCDC poll challengers at each polling location were asked to collect this data and text or email the totals to Ms. Ore Obiwumi. The desired data included the Municipality, District Number, Time and Total Ballots recorded. Ms. Obiwumi transferred this information to a Google Sheet which could be accessed by the MCDC committee members and candidates. 
+
+Data for this analysis was downloaded from the Google Sheet and processed as follows:
+
+- Summarized in a table the district reports by municipality,
+- Applied County Data for the 8PM report from totals presented in the Morris County Election Results Spreadsheet for November 2019, ^[https://morriscountyclerk.org/wp-content/uploads/2019/11/2019-General-Results.xlsx]
+- Linearly interpolated turnout estimates for times with missing data for the districts with at least three values,
+- Calculated differences to obtain estimates of ballots cast by district by two hour period,
+- Applied the K-means cluster algorithm to group turn out profiles 
+- Assigned descriptive names to each cluster
+- Prepared a choropleth map of districts with data by cluster, 
+- Created Comprehensive charts for all districts with data. 
+
+In this first chart we have a summary of the number of districts for which data was submitted. In total, data was received for 122 districts and from these districts, 14 municipalities are represented. As to be expected the larger municipalities have the most reports. 
+
+```{r data_table}
+
+District_Count <- MCDC_Results_Municipal_2019_Turnout_long_filled %>% 
+  select(Municipality, District) %>% 
+  distinct() %>% 
+  group_by(Municipality) %>% 
+  summarize( Districts_Reported = n())
+
+Total <- data.frame(Municipality = "Total",  Districts_Reported = sum(District_Count$Districts_Reported))
+
+District_Count %>% ggplot(aes(x= Municipality, y = Districts_Reported)) + 
+  geom_bar(stat="identity", fill = "blue") + coord_flip() +
+  labs(title = "Summary of Districts with Turn Out Data") + 
+  theme_bw()
+  
+```
+
+
+## Cluster Profile 
+
+Clustering groups is part "art" as well as "science". After trying several different options, more than six clusters seems to yield two or more clusters with similar patterns. The following chart is known as a boxplot. It is a visual to show the variation in a particular parameter. The time on the x-axis is the end  of the two hour interval. To interpret each box, the mean percentage turnout is represented by the dark horizontal line in the center of the box. The top and bottom of the box represent the first and third quartiles of the percentage turnout. The tips of lines running above and below the box represent the 1.5 times the difference between the first and third quartiles. Any instances outside of that range are noted by dots. A simple way of using these charts is to consider the temporal progression of the median percentages through the day, the solid horizontal lines. Thus in the first (#1) plot, the median value for the 6AM to 8AM interval is about 10% of the total turnout for the day. The median increases to about 17% in the 8AM to 10AM period and the levels back to 14% there after. 
+
+Separate facets are the provided for each cluster group. Here we are looking at the variation in turnout percentage for each two hour period. These numbers in this paragraph refer to the charts from left to right. After looking at the plots, each cluster was given a descriptive name. #1 has an increase in turnout occurs earlier and tails off later in the day, "Afternoon Peak". There is one district with a markedly different temporal pattern than the rest of the sample, Chatham Township District 2. Here almost 40% of the voters turned out in the 8 AM to 10 AM period. That group is designated by Cluster #2. #3 starts out a low turn out rate but the increases to a higher starting at about 2PM, "In the Afternoon".  #4 has the highest turn out in the 8 AM to 10 AM interval, hence the designation "Mid Morning Peak".  #5 is flat until about 4PM to 8PM, suggesting an increase after work, "On Commute Home". #6 has a mostly similar turnout for all hours of the day, "Steady". 
+
+
+```{r cluster_facet_wrap}
+
+clusters_data %>% 
+  ggplot(aes(x= as.factor(Hour), y = Percent_2_Hour, color = as.factor(Cluster_Name))) + geom_boxplot() + 
+  facet_wrap(~Cluster_Name, ncol = 6) +
+  labs(title = "Turn Out Patterns", x = "End Time for Two Hour Interval",
+       y = "Percent of Total Turnout in Two Hour Interval") + 
+  scale_y_continuous(limits = c(0,40)) + 
+  theme_bw() + 
+  theme(legend.position = "none") +
+  theme(strip.text.x = element_text(size = 7))
+
+```
+
+This next chart shows the number of districts assigned to each of these cluster groups. Almost half of the Districts are classified as "Steady". "Mid Morning Peak" is second and "On Commute Home" is close third. The reader should be reminded at this point that since there is only one sample for each District and we do not have evidence to suggest that these patterns will repeat themselves in subsequent elections. But in the absence of additional data, one may use them in the future, scaled by an estimate for total turnout for the day, for which there is data. 
+
+
+```{r cluster_summary}
+
+clusters_data %>% select(Cluster_Name, District) %>% distinct() %>% 
+  group_by(Cluster_Name) %>% 
+  summarize(Number_Districts = n()) %>% 
+  arrange(Cluster_Name) %>% 
+  ggplot(aes(x=Cluster_Name, y = Number_Districts, fill = Cluster_Name)) + 
+  geom_bar(stat="identity") + 
+  labs(title = "Count of Districts by Cluster Type",
+       x = "Cluster", y="Number of Districts") + 
+  coord_flip() + 
+  theme_bw() +
+  theme(legend.position ="none")
+```
+
+
+### Map of Districts by Cluster
+
+Continuing with the same color palette, one can map the individual districts and using the cluster color to fill the area of the reporting districts. The geographic shapefile was downloaded from the US Census Bureau website.^[https://www2.census.gov/geo/tiger/TIGER2012/VTD/tl_2012_34_vtd10.zip, accessed December 5, 2019.] The portion of Morris County that is not filled in represents those districts were data was not submitted. If one is viewing this document as a web page, one should be zoom in and out with the "plus" and "minus" buttons, and by holding down the mouse button and moving about with one's mouse you should be able to pan around the map. Also, by hovering the pointer over a district, one should see the district number and the assigned cluster designation. 
+
+```{r map }
+cluster_map 
+```
+
+## By Municipality / District Turnout Profile
+
+Finally, charts are provided for each individual municipality, for which data was submitted. In the cases where several intervals have same value, that may be the result of missing data and percentages for missing intervals was estimated by linear interpolation. 
+
+```{r town_one, fig.height = 5}
+
+muni_list <- sort(unique(clusters_by_muni$Municipality))
+
+muni_bar_plot("Boonton town")
+
+```
+
+```{r town_two, fig.height = 4}
+
+muni_bar_plot("Chatham borough")
+
+```
+
+```{r town_three, fig.height = 5}
+
+muni_bar_plot("Chatham township")
+
+```
+
+```{r chesterboro, fig.height = 3}
+
+muni_bar_plot("Chester borough")
+
+```
+
+
+```{r chester_township, fig.height = 4}
+
+muni_bar_plot("Chester township")
+
+```
+
+
+```{r dover_town, fig.height = 6}
+
+muni_bar_plot("Dover town")
+
+```
+
+```{r harding_township, fig.height =4}
+
+muni_bar_plot("Harding township")
+
+```
+
+```{r mendham_borough, fig.height = 4}
+
+muni_bar_plot("Mendham borough")
+
+```
+
+```{r mendham_township, fig.height = 4}
+
+muni_bar_plot("Mendham township")
+
+```
+
+```{r morris_plains_borough, fig.height = 4}
+
+muni_bar_plot("Morris Plains borough")
+
+```
+
+```{r morris_township, fig.height = 8}
+
+muni_bar_plot("Morris township")
+
+```
+
+```{r parsippany_troy_hills_township, fig.height = 7}
+
+muni_bar_plot("Parsippany-Troy Hills township")
+
+```
+
+```{r randolph_township, fig.height = 8}
+
+muni_bar_plot("Randolph township")
+
+```
+
+```{r roxbury_township, fig.height = 6}
+
+muni_bar_plot("Roxbury township")
+
+```
